@@ -1,5 +1,8 @@
 use bevy::{prelude::*, render::mesh::PrimitiveTopology, render::mesh::Indices, sprite::MaterialMesh2dBundle};
 
+const VIEWPORT_WIDTH: usize = 1280;
+const VIEWPORT_HEIGHT: usize = 720;
+
 fn main() {
 
     App::new()
@@ -26,9 +29,12 @@ fn create_starship_mesh() -> Mesh {
 
 fn setup(
     mut commands: Commands,
+    mut windows: ResMut<Windows>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    let window = windows.get_primary_mut().unwrap();
+    window.set_resolution(1280.0, 720.0);
     commands.spawn_bundle(Camera2dBundle::default());
 
     commands.spawn_bundle(MaterialMesh2dBundle {
@@ -41,15 +47,15 @@ fn setup(
         ..default()
     });
 
-    for _ in 0..10{
+    for _ in 0..6{
         commands.spawn_bundle(MaterialMesh2dBundle {
             mesh: meshes
                 .add(Mesh::from(shape::Circle::new(0.5)))
                 .into(),
             transform: Transform::default().with_scale(Vec3::splat(100.))
                 .with_translation(Vec3::new(
-                    (rand::random::<f32>() * 2.0 - 1.0) * 600.0,
-                    (rand::random::<f32>() * 2.0 - 1.0) * 600.0,
+                    (rand::random::<f32>() * 2.0 - 1.0) * (VIEWPORT_WIDTH as f32) / 2.0,
+                    (rand::random::<f32>() * 2.0 - 1.0) * (VIEWPORT_HEIGHT as f32) / 2.0,
                     0.0,
                 )),
             material: materials
