@@ -1,4 +1,6 @@
-use bevy::{prelude::*, render::mesh::PrimitiveTopology, render::mesh::Indices, sprite::MaterialMesh2dBundle};
+use std::f32::consts::PI;
+use bevy::{input::keyboard::KeyboardInput, prelude::*, render::mesh::{Indices, PrimitiveTopology}, sprite::MaterialMesh2dBundle};
+use bevy::input::ButtonState;
 
 const VIEWPORT_WIDTH: usize = 1280;
 const VIEWPORT_HEIGHT: usize = 720;
@@ -7,6 +9,9 @@ const VIEWPORT_MIN_X: f32 = -VIEWPORT_MAX_X;
 const VIEWPORT_MAX_Y: f32 = VIEWPORT_HEIGHT as f32 / 2.0;
 const VIEWPORT_MIN_Y: f32 = -VIEWPORT_MAX_Y;
 const ASTEROID_VELOCITY: f32 = 1.0;
+const BULLET_VELOCITY: f32 = 6.0;
+const BULLET_DISTANCE: f32 = VIEWPORT_HEIGHT as f32 / 2.0;
+const STARSHIP_ROTATION_SPEED: f32 = 5.0 * 2.0 * PI / 360.0;
 
 fn main() {
 
@@ -14,8 +19,11 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_startup_system(setup)
         .add_system(update_position)
+        .add_system(remove_bullet)
         .add_system(sync_translate_transform.after(update_position))
         .add_system(sync_asteroid_scale_transform)
+        .add_system(sync_starship_rotation_transform)
+        .add_system(keyboard_events)
         .run();
 
 }
@@ -27,7 +35,14 @@ enum AsteroidSize {
 }
 
 #[derive(Component)]
-struct Starship;
+struct Starship {
+    rotation_angle: f32
+}
+
+#[derive(Component)]
+struct Bullet {
+    start: Vec2,
+}
 
 #[derive(Component)]
 struct Asteroid {
@@ -73,7 +88,9 @@ fn setup(
     commands.spawn_bundle(Camera2dBundle::default());
 
     commands.spawn()
-        .insert(Starship)
+        .insert(Starship {
+            rotation_angle: 0.0
+        })
         .insert(Position(Vec2::splat(0.0)))
         .insert(Velocity(Vec2::splat(0.0)))
         .insert_bundle(MaterialMesh2dBundle {
@@ -103,6 +120,13 @@ fn setup(
                     .add(ColorMaterial::from(Color::rgba(0., 30., 0., 1.0))),
                 ..default()
             });
+    }
+}
+fn sync_starship_rotation_transform(
+    mut query: Query<(&Starship, &mut Transform)>,
+) {
+    for (starship, mut transform) in &mut query {
+        transform.rotation = Quat::from_rotation_z(starship.rotation_angle);
     }
 }
 
@@ -142,5 +166,58 @@ fn update_position(mut query: Query<(&Velocity, &Transform, &mut Position)>) {
         }
 
         position.0 = new_position;
+    }
+}
+
+fn keyboard_events(
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut commands: Commands,
+    keys: Res<Input<KeyCode>>,
+    mut key_evr: EventReader<KeyboardInput>,
+    mut query: Query<(&mut Starship, &Position)>,
+) {
+    for (mut starship, starship_position) in &mut query {
+        if keys.pressed(KeyCode::Left) {
+            starship.rotation_angle += STARSHIP_ROTATION_SPEED
+        } else if keys.pressed(KeyCode::Right) {
+            starship.rotation_angle -= STARSHIP_ROTATION_SPEED
+        }
+
+        for evt in key_evr.iter() {
+            if let (ButtonState::Pressed, Some(KeyCode::Space)) = 
+                (evt.state, evt.key_code) 
+            {
+                let (y, x) = (starship.rotation_angle + PI / 2.0).sin_cos();
+
+                commands
+                    .spawn()
+                    .insert(Bullet {
+                        start: starship_position.0.clone(),
+                    })
+                    .insert(Position(starship_position.0.clone()))
+                    .insert(Velocity(Vec2::new(x, y).normalize() * BULLET_VELOCITY))
+                    .insert_bundle(MaterialMesh2dBundle {
+                        mesh: meshes.add(Mesh::from(shape::Circle::default())).into(),
+                        transform: Transform::default()
+                            .with_scale(Vec3::splat(5.0))
+                            .with_translation(Vec3::new(0.0, 0.0, 0.5)),
+                        material: materials
+                            .add(ColorMaterial::from(Color::rgba(0.8, 0.8, 0.0, 1.0))),
+                        ..default()
+                    });
+            }
+        }
+    }
+}
+
+fn remove_bullet(
+    mut commands: Commands, 
+    query: Query<(Entity, &Bullet, &Position)>,
+) {
+    for (entity, bullet, position) in &query {
+        if (bullet.start - position.0).length() > BULLET_DISTANCE {
+            commands.entity(entity).despawn();
+        }
     }
 }
