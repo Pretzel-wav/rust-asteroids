@@ -10,7 +10,7 @@ const VIEWPORT_MAX_Y: f32 = VIEWPORT_HEIGHT as f32 / 2.0;
 const VIEWPORT_MIN_Y: f32 = -VIEWPORT_MAX_Y;
 const ASTEROID_VELOCITY: f32 = 1.0;
 const BULLET_VELOCITY: f32 = 6.0;
-const BULLET_DISTANCE: f32 = VIEWPORT_HEIGHT as f32 * 1.8;
+const BULLET_DISTANCE: f32 = VIEWPORT_HEIGHT as f32 / 2.0;
 const STARSHIP_ROTATION_SPEED: f32 = 5.0 * 2.0 * PI / 360.0;
 const STARSHIP_ACCELERATION: f32 = 0.2;
 const STARSHIP_DECELERATION: f32 = 0.01;
@@ -28,14 +28,27 @@ fn main() {
         .add_system(sync_starship_rotation_transform)
         .add_system(decelerate_starship)
         .add_system(keyboard_events)
+        .add_system(detect_starship_asteroid_collision)
+        .add_system(detect_bullet_asteroid_collision)
         .run();
 
 }
 
+#[derive(Debug, Clone, Copy)]
 enum AsteroidSize {
     Big,
     Medium,
     Small,
+}
+
+impl AsteroidSize {
+    fn scale(&self) -> f32 { 
+        match self {
+            AsteroidSize::Big => 100.0,
+            AsteroidSize::Medium => 65.0,
+            AsteroidSize::Small => 30.0,
+        }
+    }
 }
 
 #[derive(Component)]
@@ -44,7 +57,7 @@ struct Starship {
 }
 
 impl Starship {
-    fn get_direction(&self) -> Vec2 {
+    fn direction(&self) -> Vec2 {
         let (y, x) = (self.rotation_angle + PI / 2.0).sin_cos();
         Vec2::new(x, y)
     }
@@ -151,11 +164,7 @@ fn sync_translate_transform(mut query: Query<(&Position, &mut Transform)>) {
 
 fn sync_asteroid_scale_transform(mut query: Query<(&Asteroid, &mut Transform)>) {
     for (asteroid, mut transform) in &mut query {
-        transform.scale = Vec3::splat( match asteroid.size {
-            AsteroidSize::Big => 100.0,
-            AsteroidSize::Medium => 80.0,
-            AsteroidSize::Small => 60.0,
-        })
+        transform.scale = Vec3::splat(asteroid.size.scale())
     }
 }
 
@@ -197,7 +206,7 @@ fn keyboard_events(
         }
 
         if keys.pressed(KeyCode::Up) {
-            velocity.0 +=  starship.get_direction() * STARSHIP_ACCELERATION;
+            velocity.0 +=  starship.direction() * STARSHIP_ACCELERATION;
 
             if velocity.0.length() > STARSHIP_MAX_VELOCITY {
                 velocity.0 = velocity.0.normalize_or_zero() * STARSHIP_MAX_VELOCITY;
@@ -215,7 +224,7 @@ fn keyboard_events(
                         start: starship_position.0.clone(),
                     })
                     .insert(Position(starship_position.0.clone()))
-                    .insert(Velocity(starship.get_direction().normalize() * BULLET_VELOCITY))
+                    .insert(Velocity(starship.direction().normalize() * BULLET_VELOCITY))
                     .insert_bundle(MaterialMesh2dBundle {
                         mesh: meshes.add(Mesh::from(shape::Circle::default())).into(),
                         transform: Transform::default()
@@ -251,3 +260,72 @@ fn decelerate_starship(
         }
     }  
 }
+
+fn detect_starship_asteroid_collision (
+    mut commands: Commands,
+    mut starship_query: Query<(Entity, &Transform, &Position), With<Starship>>,
+    mut asteroids_query: Query<(&Transform, &Position), With<Asteroid>>
+) {
+    for (starship_entity, starship_transform, starship_position) in &starship_query {
+        for (asteroid_transform, asteroid_position) in &asteroids_query {
+            let starship_size = starship_transform.scale.max_element();
+            let asteroid_size = asteroid_transform.scale.max_element();
+            let distance = (starship_position.0 - asteroid_position.0).length();
+
+            if distance < starship_size / 4.0 + asteroid_size / 2.0 {
+                commands.entity(starship_entity).despawn();
+            }
+        }
+    };
+}
+
+fn detect_bullet_asteroid_collision (
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    bullets_query: Query<(Entity, &Transform, &Position), With<Bullet>>,
+    asteroids_query: Query<(Entity, &Asteroid, &Transform, &Position), With<Asteroid>>,
+) {
+    for (bullet_entity, bullet_transform, bullet_position) in &bullets_query {
+        for (asteroid_entity, asteroid, asteroid_transform, asteroid_position) in &asteroids_query
+        {
+            let bullet_size = bullet_transform.scale.max_element();
+            let asteroid_size = asteroid_transform.scale.max_element();
+            let distance = (bullet_position.0 - asteroid_position.0).length();
+
+            if distance < bullet_size / 2.0 + asteroid_size / 2.0 {
+                commands.entity(bullet_entity).despawn();
+                commands.entity(asteroid_entity).despawn();
+
+                let asteroid_new_size = match asteroid.size {
+                    AsteroidSize::Big => Some(AsteroidSize::Medium),
+                    AsteroidSize::Medium => Some(AsteroidSize::Small),
+                    AsteroidSize::Small => None,
+                };
+
+                if let Some(asteroid_new_size) = asteroid_new_size {
+                    for _ in 0..2{
+                        commands.spawn()
+                            .insert(Asteroid {
+                                size: asteroid_new_size,
+                            })
+                            .insert(Position(asteroid_position.0.clone()))
+                            .insert(Velocity(get_random_point().normalize() * ASTEROID_VELOCITY))
+                            .insert_bundle(MaterialMesh2dBundle {
+                                mesh: meshes
+                                    .add(Mesh::from(shape::Circle::new(0.5)))
+                                    .into(),
+                                transform: Transform::default()
+                                    .with_translation(Vec3::new(0.0, 0.0, 1.0)),
+                                material: materials
+                                    .add(ColorMaterial::from(Color::rgba(0., 30., 0., 1.0))),
+                                ..default()
+                            });
+                    }
+                }
+
+            }
+        }
+    }
+}
+
