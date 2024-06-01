@@ -10,8 +10,11 @@ const VIEWPORT_MAX_Y: f32 = VIEWPORT_HEIGHT as f32 / 2.0;
 const VIEWPORT_MIN_Y: f32 = -VIEWPORT_MAX_Y;
 const ASTEROID_VELOCITY: f32 = 1.0;
 const BULLET_VELOCITY: f32 = 6.0;
-const BULLET_DISTANCE: f32 = VIEWPORT_HEIGHT as f32 / 2.0;
+const BULLET_DISTANCE: f32 = VIEWPORT_HEIGHT as f32 * 1.8;
 const STARSHIP_ROTATION_SPEED: f32 = 5.0 * 2.0 * PI / 360.0;
+const STARSHIP_ACCELERATION: f32 = 0.2;
+const STARSHIP_DECELERATION: f32 = 0.01;
+const STARSHIP_MAX_VELOCITY: f32 = 10.0;
 
 fn main() {
 
@@ -23,6 +26,7 @@ fn main() {
         .add_system(sync_translate_transform.after(update_position))
         .add_system(sync_asteroid_scale_transform)
         .add_system(sync_starship_rotation_transform)
+        .add_system(decelerate_starship)
         .add_system(keyboard_events)
         .run();
 
@@ -38,6 +42,14 @@ enum AsteroidSize {
 struct Starship {
     rotation_angle: f32
 }
+
+impl Starship {
+    fn get_direction(&self) -> Vec2 {
+        let (y, x) = (self.rotation_angle + PI / 2.0).sin_cos();
+        Vec2::new(x, y)
+    }
+}
+
 
 #[derive(Component)]
 struct Bullet {
@@ -175,20 +187,27 @@ fn keyboard_events(
     mut commands: Commands,
     keys: Res<Input<KeyCode>>,
     mut key_evr: EventReader<KeyboardInput>,
-    mut query: Query<(&mut Starship, &Position)>,
+    mut query: Query<(&mut Starship, &Position, &mut Velocity)>,
 ) {
-    for (mut starship, starship_position) in &mut query {
+    for (mut starship, starship_position, mut velocity) in &mut query {
         if keys.pressed(KeyCode::Left) {
             starship.rotation_angle += STARSHIP_ROTATION_SPEED
         } else if keys.pressed(KeyCode::Right) {
             starship.rotation_angle -= STARSHIP_ROTATION_SPEED
         }
 
+        if keys.pressed(KeyCode::Up) {
+            velocity.0 +=  starship.get_direction() * STARSHIP_ACCELERATION;
+
+            if velocity.0.length() > STARSHIP_MAX_VELOCITY {
+                velocity.0 = velocity.0.normalize_or_zero() * STARSHIP_MAX_VELOCITY;
+            }
+        }
+
         for evt in key_evr.iter() {
             if let (ButtonState::Pressed, Some(KeyCode::Space)) = 
                 (evt.state, evt.key_code) 
             {
-                let (y, x) = (starship.rotation_angle + PI / 2.0).sin_cos();
 
                 commands
                     .spawn()
@@ -196,7 +215,7 @@ fn keyboard_events(
                         start: starship_position.0.clone(),
                     })
                     .insert(Position(starship_position.0.clone()))
-                    .insert(Velocity(Vec2::new(x, y).normalize() * BULLET_VELOCITY))
+                    .insert(Velocity(starship.get_direction().normalize() * BULLET_VELOCITY))
                     .insert_bundle(MaterialMesh2dBundle {
                         mesh: meshes.add(Mesh::from(shape::Circle::default())).into(),
                         transform: Transform::default()
@@ -220,4 +239,15 @@ fn remove_bullet(
             commands.entity(entity).despawn();
         }
     }
+}
+
+fn decelerate_starship(
+    keys: Res<Input<KeyCode>>,
+    mut query: Query<&mut Velocity, With<Starship>>
+) {
+    if !keys.pressed(KeyCode::Up) {
+        for mut velocity in &mut query {
+            velocity.0 *= 1.0 - STARSHIP_DECELERATION;
+        }
+    }  
 }
